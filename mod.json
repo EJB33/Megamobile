@@ -1,0 +1,19 @@
+{
+	"geode": "5.11.2",
+	"gd": {
+		"win": "2.2081",
+		"android": "2.2081",
+		"mac": "2.2081",
+		"ios": "2.2081"
+	},
+	"version": "v1.0.1",
+	"id": "ejb3.megamobile",
+	"name": "MegaMobile",
+	"developer": "EJB3",
+	"description": "By EJB3. Touch-friendly mod menu: noclip, jump hack, slow motion, respawn time, visual and performance cuts, HUD, session stats and presets.",
+	"resources": {
+		"sprites": [
+			"resources/*.png"
+		]
+	}
+}
