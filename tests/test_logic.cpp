@@ -6,7 +6,7 @@
 using namespace mm;
 int main() {
     // ---- registry integrity
-    static_assert(kCount == 25, "feature count changed: update the menu/docs");
+    static_assert(kCount == 28, "feature count changed: update the menu/docs");
     std::set<std::string> keys;
     for (int i = 0; i < kCount; ++i) {
         auto const& d = kDefs[i];
@@ -28,11 +28,17 @@ int main() {
     assert(std::string(kDefs[idx(F::HudCheats)].key) == "hud_cheats");
     assert(std::string(kDefs[idx(F::UnlockIcons)].key) == "unlock_icons");
     assert(std::string(kDefs[idx(F::BallOpacity)].key) == "ball_opacity");
+    assert(std::string(kDefs[idx(F::BallInPause)].key) == "ball_in_pause");
+    assert(std::string(kDefs[idx(F::BallX)].key) == "ball_x" && std::string(kDefs[idx(F::Language)].key) == "language");
     assert(kDefs[idx(F::Noclip)].cat == Cat::Player && kDefs[idx(F::RespawnTime)].cat == Cat::Player);
     assert(kDefs[idx(F::NoGlow)].cat == Cat::Visual && kDefs[idx(F::NoMirror)].cat == Cat::Visual);
     assert(kDefs[idx(F::AutoLdm)].cat == Cat::Perf && kDefs[idx(F::EcoTarget)].cat == Cat::Perf);
     assert(kDefs[idx(F::HudFps)].cat == Cat::Hud && kDefs[idx(F::HudCheats)].cat == Cat::Hud);
-    assert(kDefs[idx(F::UnlockIcons)].cat == Cat::Misc && kDefs[idx(F::BallOpacity)].cat == Cat::Misc);
+    assert(kDefs[idx(F::UnlockIcons)].cat == Cat::Misc && kDefs[idx(F::BallInPause)].cat == Cat::Misc);
+    assert(kDefs[idx(F::BallX)].cat == Cat::Hidden && kDefs[idx(F::Language)].cat == Cat::Hidden);
+    int perCat[6] = {0,0,0,0,0,0};
+    for (int i = 0; i < kCount; ++i) perCat[static_cast<int>(kDefs[i].cat)]++;
+    assert(perCat[0]==6 && perCat[1]==7 && perCat[2]==3 && perCat[3]==4 && perCat[4]==5 && perCat[5]==3);
 
     // ---- clamp / step
     auto const& sp = kDefs[idx(F::Speed)];
@@ -46,7 +52,7 @@ int main() {
 
     // ---- config file round trip + hostile input
     Values a;
-    a.set(F::Noclip, 1); a.set(F::Speed, 0.35); a.set(F::RespawnTime, 1.2); a.set(F::BallCorner, 3);
+    a.set(F::Noclip, 1); a.set(F::Speed, 0.35); a.set(F::RespawnTime, 1.2); a.set(F::BallX, 321); a.set(F::BallY, 777); a.set(F::Language, 2);
     Values b;
     parse(b, serialize(a));
     for (int i = 0; i < kCount; ++i) assert(std::fabs(a.v[i] - b.v[i]) < 1e-6);
@@ -54,17 +60,21 @@ int main() {
     parse(c, "garbage\n=5\nnoclip=abc\nspeed=99\nunknown=1\nball_size=-4\r\nhud_fps = 1\nno_glow=1\n");
     assert(c.num(F::Speed) == 1.0);                                // clamped
     assert(c.num(F::BallSize) == 30.0);                            // clamped to min
+    Values old;                                                    // an old config (with the removed ball_corner key) still loads
+    parse(old, "noclip=1\nball_corner=3\nlanguage=9\n");
+    assert(old.on(F::Noclip) && old.num(F::Language) == 2.0);
     assert(!c.on(F::Noclip));                                      // "abc" ignored
     assert(c.on(F::NoGlow));                                       // valid line still applied
     assert(c.on(F::PracticeOnly));                                 // untouched default stays on
 
     // ---- presets keep the safety and the ball
     Values p;
-    p.set(F::PracticeOnly, 0); p.set(F::BallCorner, 1); p.set(F::BallSize, 90); p.set(F::BallOpacity, 40);
+    p.set(F::PracticeOnly, 0); p.set(F::BallX, 400); p.set(F::BallY, 600); p.set(F::BallSize, 90); p.set(F::BallOpacity, 40); p.set(F::Language, 1); p.set(F::BallInPause, 0);
     p.set(F::Noclip, 1); p.set(F::JumpHack, 1);
     applyPreset(p, Preset::Panic);
     assert(!p.on(F::Noclip) && !p.on(F::JumpHack) && !anyCheatEnabled(p));
-    assert(!p.on(F::PracticeOnly) && p.num(F::BallCorner) == 1 && p.num(F::BallSize) == 90 && p.num(F::BallOpacity) == 40);
+    assert(!p.on(F::PracticeOnly) && p.num(F::BallX) == 400 && p.num(F::BallY) == 600 && p.num(F::BallSize) == 90 && p.num(F::BallOpacity) == 40);
+    assert(p.num(F::Language) == 1 && !p.on(F::BallInPause));    // presets keep the language and the ball settings
     applyPreset(p, Preset::Practice);
     assert(p.on(F::Respawn) && p.on(F::HudStats) && p.on(F::HudAcc) && !anyCheatEnabled(p));
     applyPreset(p, Preset::Performance);
@@ -72,7 +82,9 @@ int main() {
     assert(!p.on(F::Respawn) && !anyCheatEnabled(p));              // presets never enable cheats
     applyPreset(p, Preset::MinimalVisuals);
     assert(p.on(F::NoDeathFx) && p.on(F::NoParticles) && p.on(F::NoGlow) && !p.on(F::NoShaders));
-    for (int i = 0; i < kPresetCount; ++i) assert(presetName(static_cast<Preset>(i))[0] != '\0' && presetDesc(static_cast<Preset>(i))[0] != '\0');
+    for (int li = 0; li < kLangCount; ++li)
+        for (int i = 0; i < kPresetCount; ++i)
+            assert(presetName(static_cast<Lang>(li), static_cast<Preset>(i))[0] != '\0' && presetDesc(static_cast<Lang>(li), static_cast<Preset>(i))[0] != '\0');
 
     // ---- cheats gating
     assert(cheatsAllowed(true, true, false) && cheatsAllowed(true, false, true));
@@ -132,11 +144,57 @@ int main() {
     h.stats = false;
     assert(hudText(h) == "60 FPS  16.8 ms\nAcc 88.0%\nCHEATS ON");
 
-    // ---- ball corner
-    auto bl = cornerPos(2, 800, 400, 30); assert(bl.x == 30 && bl.y == 30);
-    auto tr = cornerPos(1, 800, 400, 30); assert(tr.x == 770 && tr.y == 370);
-    auto tl = cornerPos(0, 800, 400, 30); assert(tl.x == 30 && tl.y == 370);
-    auto br = cornerPos(3, 800, 400, 30); assert(br.x == 770 && br.y == 30);
+
+    // ---- languages: nothing missing, Russian is really Russian, Spanish has its accents
+    auto hasCyrillic = [](const char* t) {
+        for (const unsigned char* c = reinterpret_cast<const unsigned char*>(t); *c; ++c) if (*c == 0xD0 || *c == 0xD1) return true;
+        return false;
+    };
+    for (int i = 0; i < kStrCount; ++i)
+        for (int li = 0; li < kLangCount; ++li) {
+            const char* t = kStr[i][li];
+            assert(t != nullptr && t[0] != '\0');
+        }
+    for (int i = 0; i < kStrCount; ++i) {                        // every Russian string except the pure "HUD" one has Cyrillic
+        if (std::string(kStr[i][2]) != "HUD") assert(hasCyrillic(kStr[i][2]));
+        if (i != static_cast<int>(S::TabHud) && std::string(kStr[i][1]) != std::string(kStr[i][0])) assert(!hasCyrillic(kStr[i][1]));
+    }
+    for (int i = 0; i < kCount; ++i) {
+        assert(kNamesEs[i] && kNamesEs[i][0] && kDescsEs[i] && kDescsEs[i][0]);
+        assert(kNamesRu[i] && hasCyrillic(kNamesRu[i]) && kDescsRu[i] && hasCyrillic(kDescsRu[i]));
+        assert(std::string(featureName(Lang::En, i)) == kDefs[i].name && std::string(featureDesc(Lang::En, i)) == kDefs[i].desc);
+        assert(std::string(featureName(Lang::Es, i)) == kNamesEs[i] && std::string(featureName(Lang::Ru, i)) == kNamesRu[i]);
+    }
+    assert(std::string(featureName(Lang::Es, idx(F::PracticeOnly))) == "Modo seguro");
+    assert(std::string(featureName(Lang::En, idx(F::PracticeOnly))) == "Safe mode");
+    assert(std::string(featureName(Lang::Ru, -1)).empty() && std::string(featureName(Lang::Ru, kCount)).empty());
+    assert(std::string(tr(Lang::En, S::SafeOn)) == "Safe mode: ON" && std::string(tr(Lang::Es, S::SafeOff)) == "Modo seguro: NO");
+    assert(utf8Length("abc") == 3 && utf8Length("\u0418\u0433\u0440\u043e\u043a") == 5 && utf8Length("Espa\u00f1ol") == 7 && utf8Length("") == 0);
+    assert(std::string(langName(Lang::En)) == "English" && std::string(langName(Lang::Es)) == "Espa\u00f1ol" && utf8Length(langName(Lang::Ru)) == 7);
+    Values lv;
+    assert(langOf(lv) == Lang::En);
+    lv.set(F::Language, 1); assert(langOf(lv) == Lang::Es);
+    lv.set(F::Language, 2); assert(langOf(lv) == Lang::Ru);
+    lv.v[idx(F::Language)] = 77; assert(langOf(lv) == Lang::Ru);   // out-of-range falls back safely
+    lv.v[idx(F::Language)] = -3; assert(langOf(lv) == Lang::En);
+    // translated stats and HUD
+    SessionStats ts; ts.onAttempt(); ts.onDeath(12.5);
+    auto es = statsLines(ts, 90.0, Lang::Es);
+    assert(es[0] == "Intentos: 1   Muertes: 1" && es[4].find("muertes") != std::string::npos && es[3].find("\u00daltimas") == 0);
+    auto ru = statsLines(ts, 90.0, Lang::Ru);
+    assert(hasCyrillic(ru[0].c_str()) && ru[0].find("1") != std::string::npos);
+    HudInput hl; hl.stats = true; hl.session = &ts; hl.cheats = true; hl.cheatsOn = true; hl.lang = Lang::Es;
+    assert(hudText(hl) == "Int 1  Muertes 1  Mejor 12.5%\nTRAMPAS ACTIVAS");
+    hl.lang = Lang::Ru; assert(hasCyrillic(hudText(hl).c_str()));
+    hl.lang = Lang::En; assert(hudText(hl) == "Att 1  Deaths 1  Best 12.5%\nCHEATS ON");
+    // the ball: saved position and the safe-mode switch live in the config
+    Values bv; bv.set(F::BallX, 5000); bv.set(F::BallY, -9);
+    assert(bv.num(F::BallX) == 1000 && bv.num(F::BallY) == 0);
+    assert(bv.on(F::PracticeOnly) && bv.on(F::BallInPause));      // safe by default, ball in pause menu by default
+    bv.set(F::PracticeOnly, 0);
+    assert(cheatsAllowed(bv.on(F::PracticeOnly), false, false));  // safe mode OFF: cheats work in normal runs
+    bv.set(F::PracticeOnly, 1);
+    assert(!cheatsAllowed(bv.on(F::PracticeOnly), false, false)); // safe mode ON: blocked outside practice/test
 
     std::cout << "megamobile logic tests passed\n";
 }
