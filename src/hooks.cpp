@@ -8,6 +8,7 @@
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/GameManager.hpp>
 #include <Geode/modify/LevelInfoLayer.hpp>
+#include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/modify/ShaderLayer.hpp>
@@ -33,6 +34,7 @@ namespace {
         in.session = &r.stats;
         in.accuracy = mm::accuracyPercent(r.attempt.frames, r.attempt.deathFrames);
         in.cheatsOn = mm::anyCheatEnabled(v) && mm::cheatsOk(pl);
+        in.lang = mm::lang();
         const std::string text = mm::hudText(in);
 
         CCNode* node = pl->m_uiLayer->getChildByID("hud"_spr);
@@ -42,16 +44,23 @@ namespace {
         }
 
         CCLabelBMFont* label = node ? typeinfo_cast<CCLabelBMFont*>(node) : nullptr;
+        // The font depends on the language, so a label made in another language is replaced.
+        if (label && r.hudLang != in.lang) {
+            label->removeFromParent();
+            label = nullptr;
+            node = nullptr;
+        }
         if (!label) {
             if (node) node->removeFromParent();
-            label = CCLabelBMFont::create(text.c_str(), "chatFont.fnt");
+            label = mm::makeLabel(text.c_str(), false);
             label->setID("hud"_spr);
-            label->setScale(0.45f);
+            label->setScale(0.45f * mm::fontScale());
             label->setOpacity(210);
             label->setAnchorPoint({0.f, 1.f});
             auto win = CCDirector::sharedDirector()->getWinSize();
             label->setPosition({6.f, win.height - 6.f});
             pl->m_uiLayer->addChild(label, 1000);
+            r.hudLang = in.lang;
         }
         label->setString(text.c_str());
     }
@@ -79,6 +88,7 @@ namespace {
         if (r.hudTimer >= 0.25) {
             r.hudTimer = 0.0;
             updateHud(pl);
+            if (!pl->m_isPaused) mm::setBallVisible(false);   // the ball only shows in menus and in the pause menu
         }
     }
 
@@ -96,7 +106,13 @@ class $modify(MMPlayLayer, PlayLayer) {
         r.meter.reset();
         r.pressure = mm::Pressure::None;
         r.ecoActive = false;
+        mm::setBallVisible(false);
         return PlayLayer::init(level, useReplay, dontCreateObjects);
+    }
+
+    void onQuit() {
+        mm::setBallVisible(true);
+        PlayLayer::onQuit();
     }
 
     void resetLevel() {
@@ -249,5 +265,14 @@ class $modify(MMGameManager, GameManager) {
     bool isIconUnlocked(int key, IconType type) {
         if (mm::vals().on(mm::F::UnlockIcons)) return true;
         return GameManager::isIconUnlocked(key, type);
+    }
+};
+
+// ------------------------------------------------ the ball comes back in the pause menu
+
+class $modify(MMPauseLayer, PauseLayer) {
+    void customSetup() {
+        PauseLayer::customSetup();
+        if (mm::vals().on(mm::F::BallInPause)) mm::setBallVisible(true);
     }
 };
