@@ -6,7 +6,7 @@
 using namespace mm;
 int main() {
     // ---- registry integrity
-    static_assert(kCount == 28, "feature count changed: update the menu/docs");
+    static_assert(kCount == 30, "feature count changed: update the menu/docs");
     std::set<std::string> keys;
     for (int i = 0; i < kCount; ++i) {
         auto const& d = kDefs[i];
@@ -36,9 +36,12 @@ int main() {
     assert(kDefs[idx(F::HudFps)].cat == Cat::Hud && kDefs[idx(F::HudCheats)].cat == Cat::Hud);
     assert(kDefs[idx(F::UnlockIcons)].cat == Cat::Misc && kDefs[idx(F::BallInPause)].cat == Cat::Misc);
     assert(kDefs[idx(F::BallX)].cat == Cat::Hidden && kDefs[idx(F::Language)].cat == Cat::Hidden);
-    int perCat[6] = {0,0,0,0,0,0};
+    int perCat[7] = {0,0,0,0,0,0,0};
     for (int i = 0; i < kCount; ++i) perCat[static_cast<int>(kDefs[i].cat)]++;
-    assert(perCat[0]==6 && perCat[1]==7 && perCat[2]==3 && perCat[3]==4 && perCat[4]==5 && perCat[5]==3);
+    assert(perCat[0]==6 && perCat[1]==7 && perCat[2]==3 && perCat[3]==4 && perCat[4]==5 && perCat[5]==2 && perCat[6]==3);
+    assert(std::string(kDefs[idx(F::MacroExtra)].key) == "macro_extra" && std::string(kDefs[idx(F::MacroExtraTicks)].key) == "macro_extra_ticks");
+    assert(kDefs[idx(F::MacroExtra)].cat == Cat::Macro && kDefs[idx(F::MacroExtraTicks)].cat == Cat::Macro);
+    assert(std::string(featureName(Lang::En, idx(F::MacroExtra))) == "Click extrapolation");
 
     // ---- clamp / step
     auto const& sp = kDefs[idx(F::Speed)];
@@ -195,6 +198,99 @@ int main() {
     assert(cheatsAllowed(bv.on(F::PracticeOnly), false, false));  // safe mode OFF: cheats work in normal runs
     bv.set(F::PracticeOnly, 1);
     assert(!cheatsAllowed(bv.on(F::PracticeOnly), false, false)); // safe mode ON: blocked outside practice/test
+
+    // ---- macro: time -> tick
+    assert(tickFromTime(0.0) == 0 && tickFromTime(-5.0) == 0 && tickFromTime(NAN) == 0);
+    assert(tickFromTime(1.0) == 240 && tickFromTime(0.0125) == 3);
+    assert(tickFromTime(1e12) == kMacroMaxTick);
+
+    // ---- macro: recording, with and without click extrapolation
+    MacroSession rec;
+    rec.mode = MacroMode::Record;
+    assert(rec.record(100, 1, false, true, 0) && rec.record(130, 1, false, false, 0));
+    assert(rec.macro.events.size() == 2 && rec.macro.events[0].tick == 100 && rec.macro.clicks() == 1);
+    assert(std::fabs(rec.macro.seconds() - 130.0 / 240.0) < 1e-9);
+    MacroSession ext;
+    ext.mode = MacroMode::Record;
+    ext.record(100, 1, false, true, 2);                       // saved 2 ticks earlier
+    ext.record(101, 1, false, false, 2);                      // 99: later than the previous one, kept as is
+    assert(ext.macro.events[0].tick == 98 && ext.macro.events[1].tick == 99);
+    ext.record(1, 1, true, true, 12);                         // 1-12 would be under 0; order is kept, so it is 99
+    assert(ext.macro.events[2].tick == 99 && ext.macro.events[2].player2);
+    MacroSession ext2;
+    ext2.mode = MacroMode::Record;
+    ext2.record(100, 1, false, true, 5);                      // 95
+    ext2.record(101, 1, false, false, 5);                     // 96: the gap between press and release is kept
+    assert(ext2.macro.events[0].tick == 95 && ext2.macro.events[1].tick == 96);
+    ext2.record(2, 1, false, true, 12);                       // would be 0, but never before the previous (96)
+    assert(ext2.macro.events[2].tick == 96);
+    MacroSession edge;
+    assert(!edge.record(5, 0, false, true, 0) && !edge.record(5, 4, false, true, 0));   // only buttons 1-3
+    edge.record(0, 1, false, true, -7);                       // negative shift is treated as 0
+    assert(edge.macro.events[0].tick == 0);
+
+    // ---- macro: a new attempt
+    rec.startAttempt();                                       // recording: starts from scratch
+    assert(rec.macro.events.empty());
+    MacroSession play;
+    play.mode = MacroMode::Play;
+    play.macro = ext.macro;
+    play.macro.events = {{10, 1, false, true}, {10, 2, true, true}, {50, 1, false, false}, {90, 1, false, true}};
+    assert(play.due(9).empty());
+    auto d1 = play.due(10);                                   // two events share tick 10
+    assert(d1.size() == 2 && d1[0].button == 1 && d1[1].player2);
+    assert(play.due(10).empty());                             // each event is delivered once
+    assert(play.due(60).size() == 1 && play.due(1000).size() == 1 && play.due(2000).empty());
+    play.startAttempt();                                      // playback: back to the first event
+    assert(play.playIndex == 0 && play.due(10).size() == 2);
+    play.stop(); assert(play.mode == MacroMode::Idle);
+
+    // ---- macro: export / import round trip
+    Macro exported;
+    exported.events = {{3, 1, false, true}, {40, 1, false, false}, {41, 3, true, true}, {900, 3, true, false}};
+    const std::string text = macroToText(exported);
+    assert(text.rfind("MMACRO 1\ntps 240\n", 0) == 0);
+    Macro imported; std::string err;
+    assert(macroFromText(text, imported, err));
+    assert(imported.events.size() == 4);
+    for (size_t i = 0; i < 4; ++i) {
+        assert(imported.events[i].tick == exported.events[i].tick && imported.events[i].button == exported.events[i].button);
+        assert(imported.events[i].player2 == exported.events[i].player2 && imported.events[i].down == exported.events[i].down);
+    }
+    // another tick rate is converted to 240 (60 tps: every tick becomes 4)
+    Macro conv;
+    assert(macroFromText("MMACRO 1\ntps 60\n10,1,1,1\n20,1,1,0\n", conv, err));
+    assert(conv.events[0].tick == 40 && conv.events[1].tick == 80);
+    // unsorted input is sorted, comments and blank lines are ignored, windows line endings work
+    Macro msorted;
+    assert(macroFromText("mmacro 1\r\n# a comment\r\n\r\n50,1,1,0\r\n10,1,1,1\r\n", msorted, err));
+    assert(msorted.events[0].tick == 10 && msorted.events[1].tick == 50);
+    // hostile / broken input is refused with a reason, and never changes the output
+    Macro keep; keep.events = {{1, 1, false, true}};
+    assert(!macroFromText("hello\n1,1,1,1\n", keep, err) && err == "not a MegaMobile macro");
+    assert(!macroFromText("", keep, err));
+    assert(!macroFromText("MMACRO 1\ntps 240\n", keep, err) && err == "no events");
+    assert(!macroFromText("MMACRO 1\n1,9,1,1\nabc\n5,1,3,1\n-4,1,1,1\n1,1,1,2\n", keep, err) && err == "no valid events");
+    assert(keep.events.size() == 1);                          // unchanged after failures
+    Macro partial;                                            // bad lines are skipped, good ones stay
+    assert(macroFromText("MMACRO 1\n7,1,1,1\nbroken\n9,1,1,0\n", partial, err) && partial.events.size() == 2);
+    assert(!macroFromText("MMACRO 1\n99999999999999,1,1,1\n", keep, err));   // absurd tick
+    std::string huge = "MMACRO 1\n";
+    for (int i = 0; i < 200001; ++i) huge += "1,1,1,1\n";
+    assert(!macroFromText(huge, keep, err) && err == "too many events");
+
+    // ---- macro: HUD text
+    MacroSession hs2; hs2.mode = MacroMode::Record; hs2.macro.events = {{1,1,false,true},{2,1,false,false}};
+    assert(macroHudText(hs2, false, Lang::En) == "REC 2");
+    hs2.mode = MacroMode::Play; hs2.playIndex = 1;
+    assert(macroHudText(hs2, false, Lang::En) == "PLAY 1/2");
+    assert(macroHudText(hs2, true, Lang::En) == "PLAY: blocked by safe mode");
+    assert(hasCyrillic(macroHudText(hs2, true, Lang::Ru).c_str()));
+    hs2.mode = MacroMode::Idle; assert(macroHudText(hs2, false, Lang::En).empty());
+    HudInput hm; hm.macro = "REC 2";
+    assert(hudText(hm) == "REC 2");                           // the macro line shows even with every HUD toggle off
+    hm.fps = true; hm.sample.fps = 60.f; hm.sample.ms = 16.7f;
+    assert(hudText(hm) == "REC 2\n60 FPS  16.7 ms");
 
     std::cout << "megamobile logic tests passed\n";
 }
