@@ -6,7 +6,7 @@
 using namespace mm;
 int main() {
     // ---- registry integrity
-    static_assert(kCount == 30, "feature count changed: update the menu/docs");
+    static_assert(kCount == 37, "feature count changed: update the menu/docs");
     std::set<std::string> keys;
     for (int i = 0; i < kCount; ++i) {
         auto const& d = kDefs[i];
@@ -36,9 +36,12 @@ int main() {
     assert(kDefs[idx(F::HudFps)].cat == Cat::Hud && kDefs[idx(F::HudCheats)].cat == Cat::Hud);
     assert(kDefs[idx(F::UnlockIcons)].cat == Cat::Misc && kDefs[idx(F::BallInPause)].cat == Cat::Misc);
     assert(kDefs[idx(F::BallX)].cat == Cat::Hidden && kDefs[idx(F::Language)].cat == Cat::Hidden);
-    int perCat[7] = {0,0,0,0,0,0,0};
+    int perCat[8] = {0,0,0,0,0,0,0,0};
     for (int i = 0; i < kCount; ++i) perCat[static_cast<int>(kDefs[i].cat)]++;
-    assert(perCat[0]==6 && perCat[1]==7 && perCat[2]==3 && perCat[3]==4 && perCat[4]==5 && perCat[5]==2 && perCat[6]==3);
+    assert(perCat[0]==6 && perCat[1]==7 && perCat[2]==3 && perCat[3]==4 && perCat[4]==5 && perCat[5]==2 && perCat[6]==7 && perCat[7]==3);
+    assert(std::string(kDefs[idx(F::ShowClicks)].key) == "show_clicks" && std::string(kDefs[idx(F::ClickB)].key) == "click_b");
+    assert(kDefs[idx(F::ShowClicks)].cat == Cat::Clicks && kDefs[idx(F::ClickB)].cat == Cat::Clicks);
+    assert(kDefs[idx(F::BallX)].cat == Cat::Hidden);
     assert(std::string(kDefs[idx(F::MacroExtra)].key) == "macro_extra" && std::string(kDefs[idx(F::MacroExtraTicks)].key) == "macro_extra_ticks");
     assert(kDefs[idx(F::MacroExtra)].cat == Cat::Macro && kDefs[idx(F::MacroExtraTicks)].cat == Cat::Macro);
     assert(std::string(featureName(Lang::En, idx(F::MacroExtra))) == "Click extrapolation");
@@ -159,7 +162,7 @@ int main() {
             assert(t != nullptr && t[0] != '\0');
         }
     for (int i = 0; i < kStrCount; ++i) {                        // every Russian string except the pure "HUD" one has Cyrillic
-        if (std::string(kStr[i][2]) != "HUD") assert(hasCyrillic(kStr[i][2]));
+        if (std::string(kStr[i][2]) != "HUD" && std::string(kStr[i][2]) != "StartPos") assert(hasCyrillic(kStr[i][2]));
         if (i != static_cast<int>(S::TabHud) && std::string(kStr[i][1]) != std::string(kStr[i][0])) assert(!hasCyrillic(kStr[i][1]));
     }
     for (int i = 0; i < kCount; ++i) {
@@ -292,5 +295,13 @@ int main() {
     hm.fps = true; hm.sample.fps = 60.f; hm.sample.ms = 16.7f;
     assert(hudText(hm) == "REC 2\n60 FPS  16.7 ms");
 
-    std::cout << "megamobile logic tests passed\n";
-}
+    // ---- keybinds: the list of actions
+    assert(actionCount() > kFixedActions);
+    std::set<std::string> ids;
+    for (int a = 0; a < actionCount(); ++a) {
+        assert(!actionId(a).empty() && ids.insert(actionId(a)).second);              // unique, non-empty ids
+        for (int li = 0; li < kLangCount; ++li) assert(!actionName(static_cast<Lang>(li), a).empty());
+    }
+    assert(actionId(0) == "jump_p1" && actionId(7) == "startpos_next" && actionId(kFixedActions) == "noclip");
+    assert(ids.count("practice_only") == 0);                                         // safe mode is never bindable
+    assert(ids.count("ball_x") == 0 && ids.count("language") == 0);        
